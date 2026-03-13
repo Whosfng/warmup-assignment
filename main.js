@@ -1,5 +1,32 @@
 const fs = require("fs");
 
+function timeToSeconds(timeStr) {
+    let timeString = timeStr.trim();
+    let isPM = timeString.toLowerCase().includes("pm");
+    let isAM = timeString.toLowerCase().includes("am");
+    let timeOnly = timeString.replace(/am|pm/i, "").trim();
+    let parts = timeOnly.split(":");
+    let h = parseInt(parts[0], 10);
+    let m = parseInt(parts[1], 10);
+    let s = parseInt(parts[2], 10);
+
+    if (isAM && h === 12) h = 0;
+    else if (isPM && h !== 12) h += 12;
+
+    return (h * 3600) + (m * 60) + s;
+}
+
+
+function secondsToTimeString(totalSeconds) {
+    if (totalSeconds < 0) totalSeconds = 0;
+    let h = Math.floor(totalSeconds / 3600);
+    let m = Math.floor((totalSeconds % 3600) / 60);
+    let s = totalSeconds % 60;
+    let mStr = m < 10 ? "0" + m : m;
+    let sStr = s < 10 ? "0" + s : s;
+    return h + ":" + mStr + ":" + sStr;
+}
+
 // ============================================================
 // Function 1: getShiftDuration(startTime, endTime)
 // startTime: (typeof string) formatted as hh:mm:ss am or hh:mm:ss pm
@@ -7,7 +34,14 @@ const fs = require("fs");
 // Returns: string formatted as h:mm:ss
 // ============================================================
 function getShiftDuration(startTime, endTime) {
-    // TODO: Implement this function
+    let startSec = timeToSeconds(startTime);
+    let endSec = timeToSeconds(endTime);
+
+    if (endSec < startSec) {
+        endSec += 86400;
+    }
+
+    return secondsToTimeString(endSec - startSec);
 }
 
 // ============================================================
@@ -17,7 +51,20 @@ function getShiftDuration(startTime, endTime) {
 // Returns: string formatted as h:mm:ss
 // ============================================================
 function getIdleTime(startTime, endTime) {
-    // TODO: Implement this function
+    let startSec = timeToSeconds(startTime);
+    let endSec = timeToSeconds(endTime);
+
+    if (endSec < startSec) {
+        endSec += 86400;
+    }
+
+    let getOverlap = (s, e, i_s, i_e) => Math.max(0, Math.min(e, i_e) - Math.max(s, i_s));
+
+    let idleSec = getOverlap(startSec, endSec, 0, 28800) +
+        getOverlap(startSec, endSec, 79200, 115200) +
+        getOverlap(startSec, endSec, 165600, 201600);
+
+    return secondsToTimeString(idleSec);
 }
 
 // ============================================================
@@ -27,7 +74,7 @@ function getIdleTime(startTime, endTime) {
 // Returns: string formatted as h:mm:ss
 // ============================================================
 function getActiveTime(shiftDuration, idleTime) {
-    // TODO: Implement this function
+    return secondsToTimeString(timeToSeconds(shiftDuration) - timeToSeconds(idleTime));
 }
 
 // ============================================================
@@ -37,7 +84,14 @@ function getActiveTime(shiftDuration, idleTime) {
 // Returns: boolean
 // ============================================================
 function metQuota(date, activeTime) {
-    // TODO: Implement this function
+    let activeSec = timeToSeconds(activeTime);
+    let requiredQuota = (8 * 3600) + (24 * 60);
+
+    if (date >= "2025-04-10" && date <= "2025-04-30") {
+        requiredQuota = 6 * 3600;
+    }
+
+    return activeSec >= requiredQuota;
 }
 
 // ============================================================
@@ -47,7 +101,48 @@ function metQuota(date, activeTime) {
 // Returns: object with 10 properties or empty object {}
 // ============================================================
 function addShiftRecord(textFile, shiftObj) {
-    // TODO: Implement this function
+    let lines = fs.existsSync(textFile) ? fs.readFileSync(textFile, "utf8").split(/\r?\n/) :[];
+    let lastDriverIndex = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        if (line.trim() === "") continue;
+        let columns = line.split(",");
+        let id = columns[0].trim();
+        let recordDate = columns[2].trim();
+
+        if (id === shiftObj.driverID && recordDate === shiftObj.date) {
+            return {};
+        }
+        if (id === shiftObj.driverID) {
+            lastDriverIndex = i;
+        }
+    }
+
+    shiftObj.shiftDuration = getShiftDuration(shiftObj.startTime, shiftObj.endTime);
+    shiftObj.idleTime = getIdleTime(shiftObj.startTime, shiftObj.endTime);
+    shiftObj.activeTime = getActiveTime(shiftObj.shiftDuration, shiftObj.idleTime);
+    shiftObj.metQuota = metQuota(shiftObj.date, shiftObj.activeTime);
+    shiftObj.hasBonus = false;
+
+    let newRecordString =[
+        shiftObj.driverID, shiftObj.driverName, shiftObj.date,
+        shiftObj.startTime, shiftObj.endTime, shiftObj.shiftDuration,
+        shiftObj.idleTime, shiftObj.activeTime, shiftObj.metQuota, shiftObj.hasBonus
+    ].join(",");
+
+    if (lastDriverIndex !== -1) {
+        lines.splice(lastDriverIndex + 1, 0, newRecordString);
+    } else {
+        if (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+            lines[lines.length - 1] = newRecordString;
+        } else {
+            lines.push(newRecordString);
+        }
+    }
+
+    fs.writeFileSync(textFile, lines.join("\n"), "utf8");
+    return shiftObj;
 }
 
 // ============================================================
